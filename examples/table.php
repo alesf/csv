@@ -4,14 +4,15 @@ use League\Csv\Reader;
 
 require '../vendor/autoload.php';
 
-$inputCsv = new Reader('data/prenoms.csv');
+$inputCsv = Reader::createFromPath('data/prenoms.csv');
 $inputCsv->setDelimiter(';');
-$inputCsv->setEncoding("iso-8859-15");
+$inputCsv->setEncodingFrom("iso-8859-15");
+$inputCsv->setLimit(30); //we are limiting the convertion to the first 31 rows
 ?>
 <!doctype html>
 <html lang="fr">
 <head>
-    <meta charset="<?=$inputCsv->getEncoding()?>">
+    <meta charset="utf-8">
     <title>Using the toHTML() method</title>
     <link rel="stylesheet" href="example.css">
 </head>

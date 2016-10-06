@@ -41,16 +41,16 @@ $writer->setDelimiter(';');
 $writer->insertOne('Ben;7;M;2004');
 $writer->insertAll([
     'Benjamin;118;M;2004',
-    ['Benoit', '6', 'M', '2004']
+    ['Benoit', '6', 'M', '2004'],
 ]);
 
 //we create a Reader object from the Writer object
-$reader = $writer->getReader();
+$reader = $writer->newReader();
 $names = $reader
     ->addSortBy(function ($row1, $row2) {
         return strcmp($row1[0], $row2[0]); //we are sorting the name
     })
-    ->fetchCol(); //we only return the name column
+    ->fetchColumn(); //we only return the name column
 ?>
 <!doctype html>
 <html lang="fr">

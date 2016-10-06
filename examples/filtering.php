@@ -5,9 +5,8 @@ use League\Csv\Reader;
 require '../vendor/autoload.php';
 
  //you can instantiate the Reader class with a SplFileObject object
-$inputCsv = new Reader(new SplFileObject('data/prenoms.csv'));
+$inputCsv = Reader::createFromPath(new SplFileObject('data/prenoms.csv'));
 $inputCsv->setDelimiter(';');
-$inputCsv->setEncoding("iso-8859-15");
 
 $res = $inputCsv
     ->addFilter(function ($row, $index) {
@@ -29,7 +28,7 @@ $res = $inputCsv
         return strcmp($row1[1], $row2[1]); //we order the result according to the number of firstname given
     })
     ->setLimit(20) //we just want the first 20 results
-    ->fetchAll();
+    ->fetch();
 
 //get the headers
 $headers = $inputCsv->fetchOne(0);
@@ -37,8 +36,8 @@ $headers = $inputCsv->fetchOne(0);
 <!doctype html>
 <html lang="fr">
 <head>
-    <meta charset="<?=$inputCsv->getEncoding()?>">
-    <title>\League\Csv\Reader filtering method</title>
+    <meta charset="iso-8859-15">
+    <title>League\Csv\Reader filtering method</title>
     <link rel="stylesheet" href="example.css">
 </head>
 <body>

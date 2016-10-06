@@ -1,21 +1,17 @@
 <?php
 
-namespace League\Csv\test;
+namespace League\Csv\Test;
 
-use SplFileInfo;
-use SplFileObject;
-use SplTempFileObject;
-use PHPUnit_Framework_TestCase;
-use DateTime;
+use DOMDocument;
+use IteratorAggregate;
+use JsonSerializable;
 use League\Csv\Reader;
-use League\Csv\Writer;
-
-date_default_timezone_set('UTC');
+use SplTempFileObject;
 
 /**
  * @group csv
  */
-class CsvTest extends PHPUnit_Framework_TestCase
+class CsvTest extends AbstractTestCase
 {
     private $csv;
 
@@ -26,217 +22,38 @@ class CsvTest extends PHPUnit_Framework_TestCase
 
     public function setUp()
     {
-        $csv = new SplTempFileObject;
+        $tmp = new SplTempFileObject();
         foreach ($this->expected as $row) {
-            $csv->fputcsv($row);
+            $tmp->fputcsv($row);
         }
 
-        $this->csv = new Reader($csv);
+        $this->csv = Reader::createFromFileObject($tmp);
     }
 
-    public function testConstructorWithFileObject()
+    public function tearDown()
     {
-        $path = __DIR__.'/foo.csv';
-
-        $csv = new Reader(new SplFileInfo($path));
-        $this->assertSame($path, $csv->getIterator()->getRealPath());
-
-        $csv = new Reader(new SplFileInfo('php://input'));
-        $this->assertFalse($csv->getIterator()->getRealPath());
+        $this->csv = null;
     }
 
-    public function testConstructorWithFilePath()
+    public function testInterface()
     {
-        $path = __DIR__.'/foo.csv';
-
-        $csv = new Reader($path);
-        $this->assertSame($path, $csv->getIterator()->getRealPath());
-    }
-
-    /**
-     * @expectedException RuntimeException
-     */
-    public function testConstructorWithNotWritablePath()
-    {
-        (new Reader('/usr/bin/foo.csv'))->getIterator();
-    }
-
-    /**
-     * @expectedException InvalidArgumentException
-     */
-    public function testConstructorWithWrongType()
-    {
-        new Reader(['/usr/bin/foo.csv']);
-    }
-
-    public function testCreateFromString()
-    {
-        $expected = "john,doe,john.doe@example.com".PHP_EOL
-            ."jane,doe,jane.doe@example.com".PHP_EOL;
-        $reader = Reader::createFromString($expected);
-        $this->assertSame($reader->fetchOne(0), ['john', 'doe', 'john.doe@example.com']);
-        $this->assertSame($reader->fetchOne(1), ['jane', 'doe', 'jane.doe@example.com']);
-    }
-
-    /**
-     * @expectedException InvalidArgumentException
-     */
-    public function testDelimeter()
-    {
-        $this->csv->setDelimiter('o');
-        $this->assertSame('o', $this->csv->getDelimiter());
-
-        $this->csv->setDelimiter('foo');
-    }
-
-    public function testDetectDelimiter()
-    {
-        $this->assertSame($this->csv->detectDelimiter(), ',');
-    }
-
-    /**
-     * @expectedException InvalidArgumentException
-     */
-    public function testDetectDelimiterWithInvalidRowLimit()
-    {
-        $this->csv->detectDelimiter(-4);
-    }
-
-    public function testDetectDelimiterWithNoCSV()
-    {
-        $file = new SplTempFileObject;
-        $file->fwrite("How are you today ?\nI'm doing fine thanks!");
-        $csv = new Writer($file);
-        $this->assertNull($csv->detectDelimiter(5, ['toto', '|']));
-    }
-
-    /**
-     * @expectedException RuntimeException
-     */
-    public function testDetectDelimiterWithInconsistentCSV()
-    {
-        $csv = new Writer(new SplTempFileObject);
-        $csv->setDelimiter(';');
-        $csv->insertOne(['toto', 'tata', 'tutu']);
-        $csv->setDelimiter('|');
-        $csv->insertAll([
-            ['toto', 'tata', 'tutu'],
-            ['toto', 'tata', 'tutu'],
-            ['toto', 'tata', 'tutu']
-        ]);
-
-        $csv->detectDelimiter(5, ['toto', '|']);
-    }
-
-    /**
-     * @expectedException InvalidArgumentException
-     */
-    public function testEscape()
-    {
-        $this->csv->setEscape('o');
-        $this->assertSame('o', $this->csv->getEscape());
-
-        $this->csv->setEscape('foo');
-    }
-
-    /**
-     * @expectedException InvalidArgumentException
-     */
-    public function testEnclosure()
-    {
-        $this->csv->setEnclosure('o');
-        $this->assertSame('o', $this->csv->getEnclosure());
-
-        $this->csv->setEnclosure('foo');
-    }
-
-    /**
-     * @expectedException InvalidArgumentException
-     */
-    public function testFailCreateFromString()
-    {
-        Reader::createFromString(new DateTime);
-    }
-
-    /**
-     * @expectedException InvalidArgumentException
-     */
-    public function testEncoding()
-    {
-        $expected = 'iso-8859-15';
-        $this->csv->setEncoding($expected);
-        $this->assertSame(strtoupper($expected), $this->csv->getEncoding());
-
-        $this->csv->setEncoding('');
-    }
-
-    public function testToString()
-    {
-        $expected = "john,doe,john.doe@example.com".PHP_EOL
-            ."jane,doe,jane.doe@example.com".PHP_EOL;
-        $this->assertSame($expected, $this->csv->__toString());
-    }
-
-    public function testIterator()
-    {
-        foreach ($this->csv as $key => $row) {
-            $this->assertSame($this->expected[$key], $row);
-        }
-    }
-
-    /**
-     * @expectedException InvalidArgumentException
-     */
-    public function testSetFlags()
-    {
-        $this->csv->setFlags(SplFileObject::SKIP_EMPTY);
-        $this->assertSame(SplFileObject::SKIP_EMPTY, $this->csv->getFlags() & SplFileObject::SKIP_EMPTY);
-        $this->assertSame(SplFileObject::READ_CSV, $this->csv->getFlags() & SplFileObject::READ_CSV);
-
-        $this->csv->setFlags(-3);
+        $this->assertInstanceOf(IteratorAggregate::class, $this->csv);
+        $this->assertInstanceOf(JsonSerializable::class, $this->csv);
     }
 
     public function testToHTML()
     {
-        $expected = <<<EOF
-<table class="table-csv-data">
-<tr>
-<td>john</td>
-<td>doe</td>
-<td>john.doe@example.com</td>
-</tr>
-<tr>
-<td>jane</td>
-<td>doe</td>
-<td>jane.doe@example.com</td>
-</tr>
-</table>
-EOF;
-        $this->assertSame($expected, $this->csv->toHTML());
+        $this->assertContains('<table', $this->csv->toHTML());
     }
 
     public function testToXML()
     {
-        $expected = <<<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<csv>
-  <row>
-    <cell>john</cell>
-    <cell>doe</cell>
-    <cell>john.doe@example.com</cell>
-  </row>
-  <row>
-    <cell>jane</cell>
-    <cell>doe</cell>
-    <cell>jane.doe@example.com</cell>
-  </row>
-</csv>
+        $this->assertInstanceOf(DOMDocument::class, $this->csv->toXML());
+    }
 
-EOF;
-        $doc = $this->csv->toXML();
-        $this->assertInstanceof('\DomDocument', $doc);
-        $doc->formatOutput = true;
-        $this->assertSame($expected, $doc->saveXML());
+    public function testJsonSerialize()
+    {
+        $this->assertSame($this->expected, json_decode(json_encode($this->csv), true));
     }
 
     /**
@@ -244,11 +61,12 @@ EOF;
      *
      * @dataProvider getIso8859Csv
      */
-    public function testJsonInterface($rawCsv)
+    public function testJsonSerializeAffectedByReaderOptions($rawCsv)
     {
-        $this->assertSame(json_encode($this->expected), json_encode($this->csv));
         $csv = Reader::createFromString($rawCsv);
         $csv->setEncodingFrom('iso-8859-15');
+        $csv->setOffset(799);
+        $csv->setLimit(50);
         json_encode($csv);
         $this->assertEquals(JSON_ERROR_NONE, json_last_error());
     }
@@ -258,83 +76,35 @@ EOF;
         return [[file_get_contents(__DIR__.'/data/prenoms.csv')]];
     }
 
-    public function testInitStreamFilter()
+    /**
+     * @runInSeparateProcess
+     */
+    public function testOutputSize()
     {
-        $filter = 'php://filter/write=string.rot13/resource='.__DIR__.'/foo.csv';
-        $csv = new Reader(new SplFileInfo($filter));
-        $this->assertTrue($csv->hasStreamFilter('string.rot13'));
-        $this->assertSame(STREAM_FILTER_WRITE, $csv->getStreamFilterMode());
-
-        $filter = 'php://filter/read=string.toupper/resource='.__DIR__.'/foo.csv';
-        $csv = new Reader(new SplFileInfo($filter));
-        $this->assertTrue($csv->hasStreamFilter('string.toupper'));
-        $this->assertSame(STREAM_FILTER_READ, $csv->getStreamFilterMode());
+        $this->assertSame(60, $this->csv->output(__DIR__.'/data/test.csv'));
     }
 
     /**
-     * @expectedException InvalidArgumentException
+     * @runInSeparateProcess
      */
-    public function testappendStreamFilter()
+    public function testOutputHeaders()
     {
-        $path = __DIR__.'/foo.csv';
-        $csv = new Reader(new SplFileInfo($path));
-        $csv->appendStreamFilter('string.toupper');
-        foreach ($csv->getIterator() as $row) {
-            $this->assertSame($row, ['JOHN', 'DOE', 'JOHN.DOE@EXAMPLE.COM']);
+        if (!function_exists('xdebug_get_headers')) {
+            $this->markTestSkipped();
         }
-        $csv->appendStreamFilter(new DateTime);
+        $this->csv->output('test.csv');
+        $headers = \xdebug_get_headers();
+
+        // Due to the variety of ways the xdebug expresses Content-Type of text files,
+        // we cannot count on complete string matching.
+        $this->assertContains('content-type: text/csv', strtolower($headers[0]));
+        $this->assertSame($headers[1], 'Content-Transfer-Encoding: binary');
+        $this->assertSame($headers[2], 'Content-Disposition: attachment; filename="test.csv"');
     }
 
-    /**
-     * @expectedException RuntimeException
-     */
-    public function testprependStreamFilter()
+    public function testToString()
     {
-        (new Reader(new SplTempFileObject))->prependStreamFilter('string.toupper');
-    }
-
-    /**
-     * @expectedException OutOfBoundsException
-     */
-    public function testaddMultipleStreamFilter()
-    {
-        $path = __DIR__.'/foo.csv';
-        $csv = new Reader(new SplFileInfo($path));
-        $csv->setFlags(SplFileObject::READ_AHEAD|SplFileObject::SKIP_EMPTY);
-        $csv->appendStreamFilter('string.tolower');
-        $csv->prependStreamFilter('string.rot13');
-        $csv->appendStreamFilter('string.toupper');
-        $this->assertTrue($csv->hasStreamFilter('string.tolower'));
-        $csv->removeStreamFilter('string.tolower');
-        $this->assertFalse($csv->hasStreamFilter('string.tolower'));
-
-        foreach ($csv->getIterator() as $row) {
-            $this->assertSame($row, ['WBUA', 'QBR', 'WBUA.QBR@RKNZCYR.PBZ']);
-        }
-        $csv->clearStreamFilter();
-        $this->assertFalse($csv->hasStreamFilter('string.rot13'));
-
-        $csv->appendStreamFilter('string.toupper');
-        $this->assertSame(STREAM_FILTER_READ, $csv->getStreamFilterMode());
-        $csv->setStreamFilterMode(STREAM_FILTER_WRITE);
-        $this->assertSame(STREAM_FILTER_WRITE, $csv->getStreamFilterMode());
-        foreach ($csv->getIterator() as $row) {
-            $this->assertSame($row, ['john', 'doe', 'john.doe@example.com']);
-        }
-        $csv->setStreamFilterMode(34);
-    }
-
-    /**
-     * @expectedException RuntimeException
-     */
-    public function testGetFilterPath()
-    {
-        $path = __DIR__.'/foo.csv';
-        $csv = new Writer(new SplFileInfo($path));
-        $csv->appendStreamFilter('string.rot13');
-        $csv->prependStreamFilter('string.toupper');
-        $this->assertFalse($csv->getIterator()->getRealPath());
-
-        (new Reader(new SplTempFileObject))->appendStreamFilter('string.rot13');
+        $expected = "john,doe,john.doe@example.com\njane,doe,jane.doe@example.com\n";
+        $this->assertSame($expected, $this->csv->__toString());
     }
 }

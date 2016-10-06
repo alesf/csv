@@ -4,6 +4,7 @@
     "description" : "Csv data manipulation made easy in PHP",
     "keywords": ["csv", "import", "export", "read", "write", "filter"],
     "license": "MIT",
+    "homepage" : "http://csv.thephpleague.com",
     "authors": [
         {
             "name" : "Ignace Nyamagana Butera",
@@ -12,13 +13,17 @@
             "role" : "Developer"
         }
     ],
+    "support": {
+        "forum": "https://groups.google.com/forum/#!forum/thephpleague",
+        "issues": "https://github.com/thephpleague/csv/issues"
+    },
     "require": {
-        "php" : ">=5.4.0",
+        "php" : ">=5.5.0",
         "ext-mbstring" : "*"
     },
     "require-dev": {
-        "phpunit/phpunit" : "~4.0",
-        "squizlabs/php_codesniffer": "~1.5"
+        "phpunit/phpunit" : "^4.0",
+        "friendsofphp/php-cs-fixer": "^1.9"
     },
     "autoload": {
         "psr-4": {
@@ -31,12 +36,14 @@
             "lib\\": "examples\\lib"
         }
     },
-    "replace": {
-        "bakame/csv": "*"
+    "scripts": {
+        "test": "phpunit --coverage-text; php-cs-fixer fix -v --diff --dry-run;",
+        "phpunit": "phpunit --coverage-text",
+        "phpcs": "php-cs-fixer fix -v --diff --dry-run;"
     },
     "extra": {
         "branch-alias": {
-            "dev-master": "5.5-dev"
+            "dev-master": "8.0-dev"
         }
     }
 }

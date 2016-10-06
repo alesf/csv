@@ -4,7 +4,7 @@
 *
 * @license http://opensource.org/licenses/MIT
 * @link https://github.com/thephpleague/csv/
-* @version 5.5.0
+* @version 8.1.1
 * @package League.csv
 *
 * For the full copyright and license information, please view the LICENSE
@@ -12,18 +12,16 @@
 */
 namespace League\Csv;
 
-use DomDocument;
+use InvalidArgumentException;
+use IteratorAggregate;
 use JsonSerializable;
+use League\Csv\Config\Controls;
+use League\Csv\Config\Output;
+use League\Csv\Modifier\QueryFilter;
+use League\Csv\Modifier\StreamFilter;
 use SplFileInfo;
 use SplFileObject;
 use SplTempFileObject;
-use RuntimeException;
-use InvalidArgumentException;
-use IteratorAggregate;
-use LimitIterator;
-use CallbackFilterIterator;
-use League\Csv\Config\StreamFilter;
-use League\Csv\Config\Controls;
 
 /**
  *  An abstract class to enable basic CSV manipulation
@@ -34,20 +32,45 @@ use League\Csv\Config\Controls;
  */
 abstract class AbstractCsv implements JsonSerializable, IteratorAggregate
 {
-    /**
-     *  Stream Filter Trait
-     */
+    use Controls;
+
+    use Output;
+
+    use QueryFilter;
+
     use StreamFilter;
 
     /**
-     *  Controls Trait
+     *  UTF-8 BOM sequence
      */
-    use Controls;
+    const BOM_UTF8 = "\xEF\xBB\xBF";
+
+    /**
+     * UTF-16 BE BOM sequence
+     */
+    const BOM_UTF16_BE = "\xFE\xFF";
+
+    /**
+     * UTF-16 LE BOM sequence
+     */
+    const BOM_UTF16_LE = "\xFF\xFE";
+
+    /**
+     * UTF-32 BE BOM sequence
+     */
+    const BOM_UTF32_BE = "\x00\x00\xFE\xFF";
+
+    /**
+     * UTF-32 LE BOM sequence
+     */
+    const BOM_UTF32_LE = "\x00\x00\xFF\xFE";
 
     /**
      * The constructor path
      *
-     * @var mixed can be a SplFileInfo object or the path to a file
+     * can be a SplFileInfo object or the string path to a file
+     *
+     * @var SplFileObject|string
      */
     protected $path;
 
@@ -59,23 +82,20 @@ abstract class AbstractCsv implements JsonSerializable, IteratorAggregate
     protected $open_mode;
 
     /**
-     * The constructor
+     * Creates a new instance
      *
-     * @param mixed  $path      an SplFileInfo object or the path to a file
-     * @param string $open_mode the file open mode flag
+     * The path must be an SplFileInfo object
+     * an object that implements the `__toString` method
+     * a path to a file
+     *
+     * @param SplFileObject|string $path      The file path
+     * @param string               $open_mode The file open mode flag
      */
-    public function __construct($path, $open_mode = 'r+')
+    protected function __construct($path, $open_mode = 'r+')
     {
-        if (! is_string($path) && ! $path instanceof SplFileInfo) {
-            throw new InvalidArgumentException(
-                'path must be a valid string or a `SplFileInfo` object'
-            );
-        }
-        ini_set("auto_detect_line_endings", '1');
-        //lazy loading
-        $this->path = $path;
         $this->open_mode = strtolower($open_mode);
-        $this->initStreamFilter($path);
+        $this->path = $path;
+        $this->initStreamFilter($this->path);
     }
 
     /**
@@ -83,245 +103,147 @@ abstract class AbstractCsv implements JsonSerializable, IteratorAggregate
      */
     public function __destruct()
     {
-        //in case path is a SplFileObject we need to remove its reference
         $this->path = null;
     }
 
     /**
-     * Create a {@link AbstractCsv} from a string
+     * Return a new {@link AbstractCsv} from a SplFileObject
      *
-     * @param string $str The CSV data as string
+     * @param SplFileObject $file
      *
-     * @return self
-     *
-     * @throws \InvalidArgumentException If the data provided is invalid
+     * @return static
      */
-    public static function createFromString($str)
+    public static function createFromFileObject(SplFileObject $file)
     {
-        if (self::isValidString($str)) {
-            $csv = new SplTempFileObject;
-            $raw = (string) $str;
-            $raw .= PHP_EOL;
-            $csv->fwrite($raw);
-
-            return new static($csv);
+        $csv = new static($file);
+        $controls = $file->getCsvControl();
+        $csv->setDelimiter($controls[0]);
+        $csv->setEnclosure($controls[1]);
+        if (isset($controls[2])) {
+            $csv->setEscape($controls[2]);
         }
-        throw new InvalidArgumentException(
-            'the submitted data must be a string or an object implementing the `__toString` method'
-        );
-    }
-
-    /**
-     * Create a {@link AbstractCsv} instance from another {@link AbstractCsv} object
-     *
-     * @param string $class_name the class to be instantiated
-     * @param string $open_mode  the file open mode flag
-     *
-     * @return {@link AbstractCsv}
-     */
-    protected function newInstance($class_name, $open_mode)
-    {
-        $csv = new $class_name($this->path, $open_mode);
-        $csv->delimiter = $this->delimiter;
-        $csv->enclosure = $this->enclosure;
-        $csv->escape = $this->escape;
-        $csv->encodingFrom = $this->encodingFrom;
 
         return $csv;
     }
 
     /**
-     * Create a {@link Writer} instance from a {@link AbstractCsv} object
+     * Return a new {@link AbstractCsv} from a string
+     *
+     * The string must be an object that implements the `__toString` method,
+     * or a string
+     *
+     * @param string|object $str the string
+     *
+     * @return static
+     */
+    public static function createFromString($str)
+    {
+        $file = new SplTempFileObject();
+        $file->fwrite(static::validateString($str));
+
+        return new static($file);
+    }
+
+    /**
+     * validate a string
+     *
+     * @param mixed $str the value to evaluate as a string
+     *
+     * @throws InvalidArgumentException if the submitted data can not be converted to string
+     *
+     * @return string
+     */
+    protected static function validateString($str)
+    {
+        if (is_string($str) || (is_object($str) && method_exists($str, '__toString'))) {
+            return (string) $str;
+        }
+        throw new InvalidArgumentException('Expected data must be a string or stringable');
+    }
+
+    /**
+     * Return a new {@link AbstractCsv} from a string
+     *
+     * @param mixed  $path      file path
+     * @param string $open_mode the file open mode flag
+     *
+     * @throws InvalidArgumentException If $path is a SplTempFileObject object
+     *
+     * @return static
+     */
+    public static function createFromPath($path, $open_mode = 'r+')
+    {
+        if ($path instanceof SplTempFileObject) {
+            throw new InvalidArgumentException('an `SplTempFileObject` object does not contain a valid path');
+        }
+
+        if ($path instanceof SplFileInfo) {
+            $path = $path->getPath().'/'.$path->getBasename();
+        }
+
+        return new static(static::validateString($path), $open_mode);
+    }
+
+    /**
+     * Return a new {@link AbstractCsv} instance from another {@link AbstractCsv} object
+     *
+     * @param string $class     the class to be instantiated
+     * @param string $open_mode the file open mode flag
+     *
+     * @return static
+     */
+    protected function newInstance($class, $open_mode)
+    {
+        $csv = new $class($this->path, $open_mode);
+        $csv->delimiter = $this->delimiter;
+        $csv->enclosure = $this->enclosure;
+        $csv->escape = $this->escape;
+        $csv->input_encoding = $this->input_encoding;
+        $csv->input_bom = $this->input_bom;
+        $csv->output_bom = $this->output_bom;
+        $csv->newline = $this->newline;
+
+        return $csv;
+    }
+
+    /**
+     * Return a new {@link Writer} instance from a {@link AbstractCsv} object
      *
      * @param string $open_mode the file open mode flag
      *
-     * @return \League\Csv\Writer object
+     * @return Writer
      */
     public function newWriter($open_mode = 'r+')
     {
-        return $this->newInstance('\League\Csv\Writer', $open_mode);
+        return $this->newInstance(Writer::class, $open_mode);
     }
 
     /**
-     * Create a {@link Reader} instance from a {@link AbstractCsv} object
+     * Return a new {@link Reader} instance from a {@link AbstractCsv} object
      *
      * @param string $open_mode the file open mode flag
      *
-     * @return \League\Csv\Reader object
+     * @return Reader
      */
     public function newReader($open_mode = 'r+')
     {
-        return $this->newInstance('\League\Csv\Reader', $open_mode);
+        return $this->newInstance(Reader::class, $open_mode);
     }
 
     /**
-     * detect the actual number of row according to a delimiter
+     * Returns the inner SplFileObject
      *
-     * @param string  $delimiter a CSV delimiter
-     * @param integer $nb_rows   the number of row to consider
-     *
-     * @return integer
-     */
-    protected function fetchRowsCountByDelimiter($delimiter, $nb_rows = 1)
-    {
-        $iterator = $this->getIterator();
-        $iterator->setCsvControl($delimiter, $this->enclosure, $this->escape);
-        //"reduce" the csv length to a maximum of $nb_rows
-        $iterator = new LimitIterator($iterator, 0, $nb_rows);
-        //return the parse rows
-        $iterator = new CallbackFilterIterator($iterator, function ($row) {
-            return is_array($row) && count($row) > 1;
-        });
-
-        return count(iterator_to_array($iterator, false));
-    }
-
-    /**
-     * Detect the CSV file delimiter
-     *
-     * @param integer $nb_rows
-     * @param array   $delimiters additional delimiters
-     *
-     * @return null|string
-     *
-     * @throws \InvalidArgumentException If $nb_rows value is invalid
-     * @throws \RuntimeException         If too many delimiters are found
-     */
-    public function detectDelimiter($nb_rows = 1, array $delimiters = [])
-    {
-        $nb_rows = filter_var($nb_rows, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
-        if (! $nb_rows) {
-            throw new InvalidArgumentException('`$nb_rows` must be a valid positive integer');
-        }
-
-        //validate the possible delimiters
-        $delimiters = array_filter($delimiters, function ($str) {
-            return 1 == mb_strlen($str);
-        });
-        $delimiters = array_merge([$this->delimiter, ',', ';', "\t"], $delimiters);
-        $delimiters = array_unique($delimiters);
-
-        //detect the possible delimiter
-        $res = array_fill_keys($delimiters, 0);
-        array_walk($res, function (&$value, $delim) use ($nb_rows) {
-            $value = $this->fetchRowsCountByDelimiter($delim, $nb_rows);
-        });
-
-        arsort($res, SORT_NUMERIC);
-        $res = array_keys(array_filter($res));
-        if (! $res) {
-            return null;
-        } elseif (1 == count($res)) {
-            return $res[0];
-        }
-        throw new RuntimeException('too many delimiters were found: `'.implode('`,`', $res).'`');
-    }
-
-    /**
-     * Return the CSV Iterator
-     *
-     * @return \SplFileObject
+     * @return SplFileObject
      */
     public function getIterator()
     {
-        $obj = $this->path;
-        if (! $obj instanceof SplFileObject) {
-            $obj = new SplFileObject($this->getStreamFilterPath(), $this->open_mode);
+        $iterator = $this->path;
+        if (!$iterator instanceof SplFileObject) {
+            $iterator = new SplFileObject($this->getStreamFilterPath(), $this->open_mode);
         }
-        $obj->setCsvControl($this->delimiter, $this->enclosure, $this->escape);
-        $obj->setFlags($this->flags);
+        $iterator->setCsvControl($this->delimiter, $this->enclosure, $this->escape);
+        $iterator->setFlags(SplFileObject::READ_CSV | SplFileObject::READ_AHEAD | SplFileObject::SKIP_EMPTY);
 
-        return $obj;
-    }
-
-    /**
-     * JsonSerializable Interface
-     *
-     * @return array
-     */
-    public function jsonSerialize()
-    {
-        return iterator_to_array($this->convertToUtf8($this->getIterator()), false);
-    }
-
-    /**
-     * Output all data on the CSV file
-     *
-     * @param string $filename CSV downloaded name if present adds extra headers
-     */
-    public function output($filename = null)
-    {
-        $iterator = $this->getIterator();
-        //@codeCoverageIgnoreStart
-        if (! is_null($filename) && self::isValidString($filename)) {
-            $filename = (string) $filename;
-            $filename = filter_var($filename, FILTER_UNSAFE_RAW, ['flags' => FILTER_FLAG_STRIP_LOW]);
-            header('Content-Type: application/octet-stream');
-            header('Content-Transfer-Encoding: binary');
-            header('Content-Disposition: attachment; filename="'.$filename.'"');
-            if (! $iterator instanceof SplTempFileObject) {
-                header('Content-Length: '.$iterator->getSize());
-            }
-        }
-        //@codeCoverageIgnoreEnd
-        $iterator->rewind();
-        $iterator->fpassthru();
-    }
-
-    /**
-     * Retrieves the CSV content
-     *
-     * @return string
-     */
-    public function __toString()
-    {
-        ob_start();
-        $this->output();
-
-        return ob_get_clean();
-    }
-
-    /**
-     * transform a CSV into a XML
-     *
-     * @param string $root_name XML root node name
-     * @param string $row_name  XML row node name
-     * @param string $cell_name XML cell node name
-     *
-     * @return \DomDocument
-     */
-    public function toXML($root_name = 'csv', $row_name = 'row', $cell_name = 'cell')
-    {
-        $doc = new DomDocument('1.0', 'UTF-8');
-        $root = $doc->createElement($root_name);
-        $iterator = $this->convertToUtf8($this->getIterator());
-        foreach ($iterator as $row) {
-            $item = $doc->createElement($row_name);
-            foreach ($row as $value) {
-                $content = $doc->createTextNode($value);
-                $cell = $doc->createElement($cell_name);
-                $cell->appendChild($content);
-                $item->appendChild($cell);
-            }
-            $root->appendChild($item);
-        }
-        $doc->appendChild($root);
-
-        return $doc;
-    }
-
-    /**
-     * Return a HTML table representation of the CSV Table
-     *
-     * @param string $class_name optional classname
-     *
-     * @return string
-     */
-    public function toHTML($class_name = 'table-csv-data')
-    {
-        $doc = $this->toXML('table', 'tr', 'td');
-        $doc->documentElement->setAttribute('class', $class_name);
-
-        return $doc->saveHTML($doc->documentElement);
+        return $iterator;
     }
 }

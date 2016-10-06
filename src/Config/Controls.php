@@ -4,7 +4,7 @@
 *
 * @license http://opensource.org/licenses/MIT
 * @link https://github.com/thephpleague/csv/
-* @version 5.5.0
+* @version 8.1.1
 * @package League.csv
 *
 * For the full copyright and license information, please view the LICENSE
@@ -12,16 +12,16 @@
 */
 namespace League\Csv\Config;
 
-use Traversable;
-use SplFileObject;
+use CallbackFilterIterator;
 use InvalidArgumentException;
-use League\Csv\Iterator\MapIterator;
+use LimitIterator;
+use SplFileObject;
 
 /**
  *  A trait to configure and check CSV file and content
  *
  * @package League.csv
- * @since  5.5.0
+ * @since  6.0.0
  *
  */
 trait Controls
@@ -48,31 +48,24 @@ trait Controls
     protected $escape = '\\';
 
     /**
-     * the \SplFileObject flags holder
-     *
-     * @var integer
-     */
-    protected $flags = SplFileObject::READ_CSV;
-
-    /**
-     * Charset Encoding for the CSV
+     * newline character
      *
      * @var string
      */
-    protected $encodingFrom = 'UTF-8';
+    protected $newline = "\n";
 
     /**
-     * set the field delimeter
+     * Sets the field delimiter
      *
      * @param string $delimiter
      *
-     * @return self
+     * @throws InvalidArgumentException If $delimiter is not a single character
      *
-     * @throws \InvalidArgumentException If $delimeter is not a single character
+     * @return $this
      */
-    public function setDelimiter($delimiter = ',')
+    public function setDelimiter($delimiter)
     {
-        if (1 != mb_strlen($delimiter)) {
+        if (!$this->isValidCsvControls($delimiter)) {
             throw new InvalidArgumentException('The delimiter must be a single character');
         }
         $this->delimiter = $delimiter;
@@ -81,7 +74,19 @@ trait Controls
     }
 
     /**
-     * return the current field delimiter
+     * Tell whether the submitted string is a valid CSV Control character
+     *
+     * @param string $str The submitted string
+     *
+     * @return bool
+     */
+    protected function isValidCsvControls($str)
+    {
+        return 1 == mb_strlen($str);
+    }
+
+    /**
+     * Returns the current field delimiter
      *
      * @return string
      */
@@ -91,17 +96,73 @@ trait Controls
     }
 
     /**
-     * set the field enclosure
+     * Detect Delimiters occurences in the CSV
+     *
+     * Returns a associative array where each key represents
+     * a valid delimiter and each value the number of occurences
+     *
+     * @param string[] $delimiters the delimiters to consider
+     * @param int      $nb_rows    Detection is made using $nb_rows of the CSV
+     *
+     * @return array
+     */
+    public function fetchDelimitersOccurrence(array $delimiters, $nb_rows = 1)
+    {
+        $nb_rows = $this->validateInteger($nb_rows, 1, 'The number of rows to consider must be a valid positive integer');
+        $filter_row = function ($row) {
+            return is_array($row) && count($row) > 1;
+        };
+        $delimiters = array_unique(array_filter($delimiters, [$this, 'isValidCsvControls']));
+        $csv = $this->getIterator();
+        $res = [];
+        foreach ($delimiters as $delim) {
+            $csv->setCsvControl($delim, $this->enclosure, $this->escape);
+            $iterator = new CallbackFilterIterator(new LimitIterator($csv, 0, $nb_rows), $filter_row);
+            $res[$delim] = count(iterator_to_array($iterator, false), COUNT_RECURSIVE);
+        }
+        arsort($res, SORT_NUMERIC);
+
+        return $res;
+    }
+
+    /**
+     * Validate an integer
+     *
+     * @param int    $int
+     * @param int    $minValue
+     * @param string $errorMessage
+     *
+     * @throws InvalidArgumentException If the value is invalid
+     *
+     * @return int
+     */
+    protected function validateInteger($int, $minValue, $errorMessage)
+    {
+        if (false === ($int = filter_var($int, FILTER_VALIDATE_INT, ['options' => ['min_range' => $minValue]]))) {
+            throw new InvalidArgumentException($errorMessage);
+        }
+        return $int;
+    }
+
+    /**
+     * Returns the CSV Iterator
+     *
+     * @return SplFileObject
+     */
+    abstract public function getIterator();
+
+    /**
+     * Sets the field enclosure
      *
      * @param string $enclosure
      *
-     * @return self
+     * @throws InvalidArgumentException If $enclosure is not a single character
      *
-     * @throws \InvalidArgumentException If $enclosure is not a single character
+     * @return $this
      */
-    public function setEnclosure($enclosure = '"')
+    public function setEnclosure($enclosure)
     {
-        if (1 != mb_strlen($enclosure)) {
+        if (!$this->isValidCsvControls($enclosure)) {
             throw new InvalidArgumentException('The enclosure must be a single character');
         }
         $this->enclosure = $enclosure;
@@ -110,7 +171,7 @@ trait Controls
     }
 
     /**
-     * return the current field enclosure
+     * Returns the current field enclosure
      *
      * @return string
      */
@@ -120,17 +181,17 @@ trait Controls
     }
 
     /**
-     * set the field escape character
+     * Sets the field escape character
      *
      * @param string $escape
      *
-     * @return self
+     * @throws InvalidArgumentException If $escape is not a single character
      *
-     * @throws \InvalidArgumentException If $escape is not a single character
+     * @return $this
      */
-    public function setEscape($escape = "\\")
+    public function setEscape($escape)
     {
-        if (1 != mb_strlen($escape)) {
+        if (!$this->isValidCsvControls($escape)) {
             throw new InvalidArgumentException('The escape character must be a single character');
         }
         $this->escape = $escape;
@@ -139,7 +200,7 @@ trait Controls
     }
 
     /**
-     * return the current field escape character
+     * Returns the current field escape character
      *
      * @return string
      */
@@ -149,118 +210,26 @@ trait Controls
     }
 
     /**
-     * Set the Flags associated to the CSV SplFileObject
+     * Sets the newline sequence characters
      *
-     * @param integer $flags
+     * @param string $newline
      *
-     * @return self
+     * @return static
      */
-    public function setFlags($flags)
+    public function setNewline($newline)
     {
-        if (false === filter_var($flags, FILTER_VALIDATE_INT, ['options' => ['min_range' => 0]])) {
-            throw new InvalidArgumentException('you should use a `SplFileObject` Constant');
-        }
-
-        $this->flags = $flags|SplFileObject::READ_CSV|SplFileObject::DROP_NEW_LINE;
+        $this->newline = (string) $newline;
 
         return $this;
     }
 
     /**
-     * Returns the file Flags
-     *
-     * @return integer
-     */
-    public function getFlags()
-    {
-        return $this->flags;
-    }
-
-    /**
-     * DEPRECATION WARNING! This method will be removed in the next major point release
-     *
-     * @deprecated deprecated since version 5.5
-     *
-     * @param string $str
-     *
-     * @return self
-     */
-    public function setEncoding($str)
-    {
-        return $this->setEncodingFrom($str);
-    }
-
-    /**
-     * DEPRECATION WARNING! This method will be removed in the next major point release
-     *
-     * @deprecated deprecated since version 5.5
+     * Returns the current newline sequence characters
      *
      * @return string
      */
-    public function getEncoding()
+    public function getNewline()
     {
-        return $this->getEncodingFrom();
-    }
-
-    /**
-     * Set the CSV encoding charset
-     *
-     * @param string $str
-     *
-     * @return self
-     */
-    public function setEncodingFrom($str)
-    {
-        $str = str_replace('_', '-', $str);
-        $str = filter_var($str, FILTER_SANITIZE_STRING, ['flags' => FILTER_FLAG_STRIP_LOW|FILTER_FLAG_STRIP_HIGH]);
-        if (empty($str)) {
-            throw new InvalidArgumentException('you should use a valid charset');
-        }
-        $this->encodingFrom = strtoupper($str);
-
-        return $this;
-    }
-
-    /**
-     * Get the source CSV encoding charset
-     *
-     * @return string
-     */
-    public function getEncodingFrom()
-    {
-        return $this->encodingFrom;
-    }
-
-    /**
-     * Convert Csv file into UTF-8
-     *
-     * @return \Traversable
-     */
-    protected function convertToUtf8(Traversable $iterator)
-    {
-        if (strpos($this->encodingFrom, 'UTF-8') !== false) {
-            return $iterator;
-        }
-
-        return new MapIterator($iterator, function ($row) {
-            foreach ($row as &$value) {
-                $value = mb_convert_encoding($value, 'UTF-8', $this->encodingFrom);
-            }
-            unset($value);
-
-            return $row;
-        });
-    }
-
-    /**
-    * Validate a variable to be stringable
-    *
-    * @param mixed $str
-    *
-    * @return boolean
-    */
-    public static function isValidString($str)
-    {
-        return is_scalar($str) || (is_object($str) && method_exists($str, '__toString'));
+        return $this->newline;
     }
 }
